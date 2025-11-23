@@ -5,8 +5,8 @@ import * as tf from "@tensorflow/tfjs";
 /**
  * Forecast — Inventory Reorder Predictor (standalone)
  * - Generates mock products in-browser (no API)
- * - Creates a deterministic 'reorder' label from a business rule
  * - Trains a TF.js model in-browser and shows predictions
+ * - Product table is hidden until Train Model & Predict completes
  */
 
 function generateProducts(count = 150) {
@@ -55,13 +55,19 @@ export default function App() {
     modelReorders: 0,
     modelAccuracy: "N/A",
   });
+  const [showResults, setShowResults] = useState(false); // <-- hide table until prediction
   const modelStore = useRef(null);
 
   useEffect(() => {
-    // generate mock products on load
+    // generate mock products on load but don't show them until prediction
     const data = generateProducts(150);
     setProducts(data);
-    setStats((s) => ({ ...s, total: data.length, serverReorders: data.reduce((acc, p) => acc + (p.reorder ? 1 : 0), 0) }));
+    setStats({
+      total: data.length,
+      serverReorders: data.reduce((acc, p) => acc + (p.reorder ? 1 : 0), 0),
+      modelReorders: 0,
+      modelAccuracy: "N/A",
+    });
 
     return () => {
       if (modelStore.current && modelStore.current.model) {
@@ -139,6 +145,7 @@ export default function App() {
       return;
     }
     setRunningModel(true);
+    setShowResults(false); // hide while training/predicting
     try {
       const { model, xMin, xMax, valAcc } = await buildAndTrainModel(products);
 
@@ -164,6 +171,10 @@ export default function App() {
         modelAccuracy: valAcc != null ? (valAcc * 100).toFixed(1) + "%" : "N/A",
       });
 
+      // show table now that predictions exist
+      setShowResults(true);
+
+      // dispose prediction tensors
       inputTensor.dispose();
       inputNorm.dispose();
       preds.dispose();
@@ -175,7 +186,23 @@ export default function App() {
     }
   }
 
+  function regenerateProducts() {
+    const data = generateProducts(150);
+    setProducts(data);
+    setStats({
+      total: data.length,
+      serverReorders: data.reduce((acc, p) => acc + (p.reorder ? 1 : 0), 0),
+      modelReorders: 0,
+      modelAccuracy: "N/A",
+    });
+    setShowResults(false); // hide results because they are stale
+  }
+
   function downloadCSV() {
+    if (!showResults) {
+      alert("Run Train Model & Predict first to generate predictions before downloading.");
+      return;
+    }
     if (!products || products.length === 0) {
       alert("No products to download.");
       return;
@@ -223,7 +250,7 @@ export default function App() {
             <div style={{ fontSize: 20, fontWeight: 700 }}>{stats.total}</div>
           </div>
           <div style={{ ...cardStyle, flex: "1 1 0" }}>
-            <div style={{ fontSize: 12, color: "#666" }}>Server Reorders (rule)</div>
+            <div style={{ fontSize: 12, color: "#666" }}>Rule Reorders</div>
             <div style={{ fontSize: 20, fontWeight: 700 }}>{stats.serverReorders}</div>
           </div>
           <div style={{ ...cardStyle, flex: "1 1 0" }}>
@@ -237,7 +264,7 @@ export default function App() {
         </div>
 
         <div style={{ display: "flex", gap: 8, marginBottom: 12 }}>
-          <button onClick={() => { const data = generateProducts(150); setProducts(data); setStats((s) => ({ ...s, total: data.length, serverReorders: data.reduce((a, b) => a + (b.reorder ? 1 : 0), 0) })); }}>
+          <button onClick={regenerateProducts} disabled={runningModel}>
             Regenerate Products
           </button>
           <button onClick={trainAndPredict} disabled={runningModel || products.length === 0}>
@@ -251,46 +278,53 @@ export default function App() {
         <div style={{ ...cardStyle }}>
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
             <h3 style={{ margin: 0 }}>Products Table</h3>
-            <div style={{ fontSize: 12, color: "#666" }}>{products.length} items</div>
+            <div style={{ fontSize: 12, color: "#666" }}>{showResults ? `${products.length} items` : "Hidden — click Train Model & Predict to show"}</div>
           </div>
 
           <div style={{ overflowX: "auto" }}>
-            <table style={{ width: "100%", borderCollapse: "collapse" }}>
-              <thead>
-                <tr>
-                  <th style={th}>ID</th>
-                  <th style={th}>Name</th>
-                  <th style={th}>Inventory</th>
-                  <th style={th}>Avg sales / wk</th>
-                  <th style={th}>Days to replenish</th>
-                  <th style={th}>Rule label</th>
-                  <th style={th}>Prediction</th>
-                  <th style={th}>Score</th>
-                </tr>
-              </thead>
-              <tbody>
-                {products.map((p) => (
-                  <tr key={p.id}>
-                    <td style={td}>{p.id}</td>
-                    <td style={td}>{p.name}</td>
-                    <td style={td}>{p.currentInventory}</td>
-                    <td style={td}>{p.avgSalesPerWeek}</td>
-                    <td style={td}>{p.daysToReplenish}</td>
-                    <td style={td}>{p.reorder}</td>
-                    <td style={td}>{p.predictionText ?? "-"}</td>
-                    <td style={td}>{p.predictionScore != null ? Number(p.predictionScore).toFixed(3) : "-"}</td>
+            {showResults ? (
+              <table style={{ width: "100%", borderCollapse: "collapse" }}>
+                <thead>
+                  <tr>
+                    <th style={th}>ID</th>
+                    <th style={th}>Name</th>
+                    <th style={th}>Inventory</th>
+                    <th style={th}>Avg sales / wk</th>
+                    <th style={th}>Days to replenish</th>
+                    <th style={th}>Rule label</th>
+                    <th style={th}>Prediction</th>
+                    <th style={th}>Score</th>
                   </tr>
-                ))}
-              </tbody>
-            </table>
+                </thead>
+                <tbody>
+                  {products.map((p) => (
+                    <tr key={p.id}>
+                      <td style={td}>{p.id}</td>
+                      <td style={td}>{p.name}</td>
+                      <td style={td}>{p.currentInventory}</td>
+                      <td style={td}>{p.avgSalesPerWeek}</td>
+                      <td style={td}>{p.daysToReplenish}</td>
+                      <td style={td}>{p.reorder}</td>
+                      <td style={td}>{p.predictionText ?? "-"}</td>
+                      <td style={td}>{p.predictionScore != null ? Number(p.predictionScore).toFixed(3) : "-"}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            ) : (
+              <div style={{ padding: 20, color: "#666" }}>
+                Products are hidden. Click <strong>Train Model & Predict</strong> to train the model and show predicted results.
+              </div>
+            )}
           </div>
         </div>
 
         <div style={{ marginTop: 12, color: "#666", fontSize: 13 }}>
           <div>Notes:</div>
           <ul>
-            <li>This app is self-contained and requires only your React dev server at <code>http://localhost:3000</code>.</li>
-            <li>Training runs in the browser — it may take several seconds depending on dataset size and CPU.</li>
+            <li>This app is self-contained and runs at <code>http://localhost:3000</code>.</li>
+            <li>Regenerating products hides previous predictions (you must re-run Train Model & Predict).</li>
+            <li>Training runs in the browser — it may take several seconds depending on CPU and dataset size.</li>
           </ul>
         </div>
       </div>
